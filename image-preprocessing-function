@@ -1,0 +1,109 @@
+import h5py
+import numpy as np
+import os
+from cv2 import convertScaleAbs, pyrDown, imshow
+from matplotlib import pyplot as plt
+from sys import platform
+from PIL import Image
+ 
+ 
+def tiff_to_hdf5(hdf5_fname, image_data, dataset_name):
+    ''' Converts image data stored in a 3d numpy array into an hdf5 file'''
+ 
+    assert image_data.ndim == 3
+   
+    with h5py.File(hdf5_fname, mode='w') as f:
+        f.create_dataset(dataset_name, image_data.shape, dtype=np.uint8)
+        f[dataset_name][...] = image_data
+        f.close()
+   
+    # Test
+    #hf = h5py.File(hdf5_fname, 'r')
+    #hdf5_images = np.array(hf.get(dataset_name))
+    #hf.close()
+    #print('Image data in hdf5 file \n', hdf5_images[0])
+    #plt.imshow(hdf5_images[0],cmap='gray')
+    #plt.savefig('image.png')
+   
+    return hdf5_fname
+ 
+ 
+def process_tiffs(path, dataset_name, down_sample):
+    ''' Processing of CT tiff image stack of material in cylindrical containers '''
+ 
+    # The image stack is a set of 2d images of container rings with material inside.
+    # The 2d images are stacked along the h direction of the cylinder.
+    # Images are cropped to only include the material, not the container.
+ 
+    # Convert to Windows path if needed
+    if platform == 'win32':
+        path = path.replace('/', '\\')
+   
+    # The upper left corner of each image has coordinate x=0, y=0.
+    # A box is defined with coordinates (low,low) for upper left and (high,high)
+    # for lower right corner
+    low = 320
+    high = 1700
+    dim = high - low
+    box = (low, low, high, high)
+   
+    # Adjust size of region to not include anything else but the material
+    #testpath = path + '\\' + '0114.tiff'
+    #testim = Image.open(testpath)
+    #print('Test image size:', testim.size)
+    #region = testim.crop(box)
+    #region.show()
+   
+    # All images in path are cropped using 'box' as a patch and loaded into a
+    # 3D numpy array.
+    files = os.listdir(path)
+    nfiles = len(files)
+           
+    if down_sample != 0:
+        hdf5_fname = path + '_down_sampled_' + str(down_sample) + '.h5'
+    else:
+        hdf5_fname = path + '.h5'
+    # Check if file exists
+    if os.path.isfile(hdf5_fname):
+        print(hdf5_fname, 'exists, tiff stack is not converted.')
+        return hdf5_fname
+    
+    for x in range(down_sample):
+        dim = int(dim/2)
+    image_data = np.empty((nfiles,dim,dim))
+ 
+    for count, f in enumerate(files):
+        if platform == 'win32':
+            fpath = path + '\\' + f
+        else:
+            fpath = path + '/' + f
+        im = Image.open(fpath)
+        region = im.crop(box)
+        im_array = np.array(region)
+        # convert uint16 image to uint8
+        # Tim's GAN expects images in uint8 format
+        im_array = convertScaleAbs(im_array, alpha=(255.0/65535.0))
+       
+        # down-sampling of images
+        # apply Gaussian filter and remove every even row and column
+        # each down sampling reduces the image size by 1/4
+        for x in range(down_sample):
+            #print('Down-sampling images to one quarter of original size', x)
+            im_array = pyrDown(im_array)
+           
+        #LowIm = Image.fromarray(im_array)
+        #LowIm.show()
+       
+        image_data[count] = im_array
+   
+    #print('Image_data shape:', image_data.shape)
+    #print('Dimension of Image_data:', image_data.ndim)
+   
+    # Convert to hdf5
+    dataset_path = tiff_to_hdf5(hdf5_fname, image_data, dataset_name)
+   
+    return dataset_path
+ 
+#path = r"\\snl\home\abeste\Sigen\gan-sofc-3d-master\data\edited\Pharmatose_60M_1"
+#dataset_name = 'x_train'
+#dataset_path = process_tiffs(path, dataset_name, down_sample = 0)
